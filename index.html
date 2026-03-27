@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Sudoku</title>
+<link rel="manifest" href="manifest.json">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#4CAF50">
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
+</script>
+<style>
+  /* ============================================================
+     DESIGN TOKENS — tweak anything here to restyle the whole app
+     ============================================================ */
+  :root {
+    --color-bg:              #0f0f13;
+    --color-surface:         #1a1a24;
+    --color-surface-raised:  #22222f;
+    --color-border:          #2e2e3f;
+    --color-border-strong:   #4a4a66;
+    --color-accent:          #F3B544;        /* primary accent */
+    --color-accent-glow:     #F3B54422;      /* accent with alpha */
+    --color-accent-muted:    #4a3a10;        /* same row/col/box highlight */
+    --color-text-primary:    #eeeef5;
+    --color-text-secondary:  #8888aa;
+    --color-text-given:      #eeeef5;
+    --color-text-entered:    #F3B544;        /* player-entered numbers */
+    --color-text-notes:      #ffffff;        /* pencil notes — bright white for contrast on any bg */
+    --color-error-bg:        #3d1f1f;
+    --color-error-text:      #ff0000;
+    --color-success:         #2B9889;        /* success / completion color */
+    --color-timer:           #eeeef5;
+
+    /* Notes mode board colors */
+    --color-notes-border:        #1a6655;
+    --color-notes-border-strong: #22aa88;
+    --color-notes-board-bg:      #0f2e25;    /* notes mode cell bg — lighter than before for contrast */
+    --color-notes-highlight:     #0d2a22;    /* notes mode row/col/box highlight */
+    --color-notes-same-num:      #0f3328;    /* notes mode same-number highlight */
+
+    --board-max-width:       420px;
+    --cell-font-size:        22px;
+    --cell-notes-font-size:  9px;
+    --border-thin:           1px;
+    --border-thick:          2.5px;
+
+    --pad-button-size:       56px;          /* button height — increase for easier tapping */
+    --pad-button-radius:     10px;
+    --pad-button-font-size:  22px;
+
+    --font-main:             'Georgia', serif;
+    --font-ui:               system-ui, -apple-system, sans-serif;
+
+    --header-height:         56px;
+    --transition-speed:      0.12s;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--color-bg);
+    color: var(--color-text-primary);
+    font-family: var(--font-ui);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    user-select: none;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;    /* fallback for older Safari */
+    min-height: 100dvh;
+    padding: 12px 12px 24px;
+    gap: 12px;
+  }
+
+  /* HEADER */
+  #header {
+    width: 100%;
+    max-width: var(--board-max-width);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--header-height);
+  }
+  #title {
+    font-family: var(--font-main);
+    font-size: 26px;
+    font-weight: normal;
+    letter-spacing: 2px;
+  }
+  #timer {
+    font-family: monospace;
+    font-size: 20px;
+    color: var(--color-timer);
+    min-width: 64px;
+    text-align: right;
+  }
+  #difficulty-badge {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
+    padding: 3px 10px;
+    border-radius: 20px;
+  }
+
+  /* TOOLBAR */
+  #toolbar {
+    width: 100%;
+    max-width: var(--board-max-width);
+    display: flex;
+    gap: 8px;
+  }
+  .toolbar-btn {
+    flex: 1;
+    padding: 9px 4px;
+    background: var(--color-surface-raised);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: var(--font-ui);
+    cursor: pointer;
+    transition: background var(--transition-speed), border-color var(--transition-speed);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .toolbar-btn:active { transform: scale(0.96); }
+  .toolbar-btn .btn-icon { font-size: 16px; }
+  .toolbar-btn:hover { background: var(--color-accent-glow); border-color: var(--color-accent); }
+  #btn-new { border-color: var(--color-accent); color: var(--color-accent); }
+
+  /* BOARD */
+  #board-wrap {
+    width: 100%;
+    max-width: var(--board-max-width);
+    aspect-ratio: 1;
+    position: relative;
+  }
+  #board {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(9, 1fr);
+    background: var(--color-border-strong);
+    border: 2px solid var(--color-border-strong);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: border-color 0.3s, background 0.3s;
+    box-sizing: border-box;
+  }
+  body.notes-mode #board {
+    background: var(--color-notes-border-strong);
+    border-color: var(--color-notes-border-strong);
+  }
+  body.notes-mode .cell {
+    background: var(--color-notes-board-bg);
+    border-color: var(--color-notes-border);
+  }
+  body.notes-mode .cell.box-right  { border-right-color: var(--color-notes-border-strong) !important; }
+  body.notes-mode .cell.box-bottom { border-bottom-color: var(--color-notes-border-strong) !important; }
+  body.notes-mode .cell.highlight  { background: var(--color-notes-highlight); }
+  body.notes-mode .cell.same-num   { background: var(--color-notes-same-num); }
+
+  .cell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--cell-font-size);
+    cursor: pointer;
+    background: var(--color-surface);
+    transition: background var(--transition-speed);
+    border-right: var(--border-thin) solid var(--color-border);
+    border-bottom: var(--border-thin) solid var(--color-border);
+    overflow: hidden;
+  }
+  .cell:nth-child(9n)   { border-right: none; }
+  .cell:nth-child(n+73) { border-bottom: none; }
+  .cell.box-right  { border-right: var(--border-thick) solid var(--color-border-strong) !important; }
+  .cell.box-bottom { border-bottom: var(--border-thick) solid var(--color-border-strong) !important; }
+
+  .cell.given    { color: var(--color-text-given); font-family: var(--font-main); }
+  .cell.entered  { color: var(--color-text-entered); }
+  .cell.error    { background: var(--color-error-bg) !important; color: var(--color-error-text) !important; }
+  .cell.selected { background: var(--color-accent-glow) !important; outline: 2px solid var(--color-accent); outline-offset: -2px; z-index: 2; }
+  .cell.highlight { background: #1e1e2a; }
+  .cell.same-num { background: var(--color-accent-muted); }
+
+  @keyframes completeFlash {
+    0%   { background: var(--color-surface); }
+    35%  { background: #3d2e08; }
+    65%  { background: #4a3a10; }
+    100% { background: var(--color-surface); }
+  }
+  .cell.flash-complete { animation: completeFlash 0.65s ease-out forwards; }
+
+  #confetti-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 200;
+  }
+
+  .sparkle {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 50%;
+    animation: sparklePop 0.5s ease-out forwards;
+    z-index: 10;
+  }
+  @keyframes sparklePop {
+    0%   { transform: scale(0) translate(0,0); opacity: 1; }
+    100% { transform: scale(1) translate(var(--tx), var(--ty)); opacity: 0; }
+  }
+
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    width: 100%;
+    height: 100%;
+    padding: 1px;
+  }
+  .note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--cell-notes-font-size);
+    color: var(--color-text-notes);
+    line-height: 1;
+  }
+  .note.lone {
+    color: var(--color-accent);
+    font-weight: 700;
+  }
+
+  /* NUMBER PAD */
+  #numpad {
+    width: 90%;
+    max-width: var(--board-max-width);
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 18px 12px;
+  }
+  .pad-btn {
+    width: 100%;
+    height: var(--pad-button-size);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: var(--pad-button-radius);
+    color: var(--color-text-primary);
+    font-size: var(--pad-button-font-size);
+    font-family: var(--font-main);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--transition-speed), border-color var(--transition-speed), opacity var(--transition-speed);
+    position: relative;
+  }
+  .pad-btn:active { transform: scale(0.93); background: var(--color-accent); border-color: var(--color-accent); }
+  .pad-btn:hover  { border-color: var(--color-accent); }
+  .pad-btn.done   { opacity: 0.4; pointer-events: none; }
+  .pad-btn .check-mark {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: var(--color-success);
+    background: var(--color-surface-raised);
+    border-radius: var(--pad-button-radius);
+    animation: checkPop 0.3s ease-out;
+  }
+  @keyframes checkPop {
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* STATUS ROW */
+  #status-row {
+    width: 100%;
+    max-width: var(--board-max-width);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #pencil-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    transition: all var(--transition-speed);
+  }
+  #pencil-toggle.active {
+    border-color: var(--color-notes-border-strong);
+    color: var(--color-notes-border-strong);
+    background: #0a2a22;
+  }
+  #pencil-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--color-text-secondary);
+    transition: background var(--transition-speed);
+  }
+  #pencil-toggle.active #pencil-dot { background: var(--color-notes-border-strong); }
+  #mistakes { font-size: 13px; color: var(--color-text-secondary); }
+  #mistakes span { color: var(--color-error-text); font-weight: bold; }
+
+
+  /* PALETTE PICKER */
+  #palette-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 4px;
+    width: 100%;
+  }
+  .palette-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-raised);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .palette-option:hover { border-color: var(--color-accent); }
+  .palette-option.active { border: 2px solid var(--color-accent); }
+  .palette-swatches {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.15);
+    flex-shrink: 0;
+  }
+  .palette-name {
+    font-size: 13px;
+    color: var(--color-text-primary);
+    text-align: left;
+  }
+
+  /* MODALS */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.78);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: 16px;
+    padding: 28px 24px;
+    width: min(360px, 92vw);
+    text-align: center;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+  .modal h2 { font-size: 22px; margin-bottom: 8px; }
+  .modal > p { color: var(--color-text-secondary); font-size: 14px; margin-bottom: 20px; }
+  .modal-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  .modal-btn {
+    padding: 10px 22px; border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-raised);
+    color: var(--color-text-primary);
+    font-size: 14px; cursor: pointer;
+    transition: all var(--transition-speed);
+  }
+  .modal-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .modal-btn:active { transform: scale(0.96); }
+
+  .diff-grid { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .diff-btn {
+    padding: 10px 18px; border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-raised);
+    color: var(--color-text-primary);
+    font-size: 14px; cursor: pointer;
+    transition: all var(--transition-speed);
+  }
+  .diff-btn.selected, .diff-btn:active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+
+  
+/* SCORES */
+  .scores-tabs { display: flex; gap: 6px; margin-bottom: 16px; justify-content: center; flex-wrap: wrap; }
+  .score-tab {
+    padding: 5px 12px; border-radius: 20px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-raised);
+    color: var(--color-text-secondary);
+    font-size: 12px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: 1px;
+    transition: all var(--transition-speed);
+  }
+  .score-tab.active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  #scores-list { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #scores-list th { color: var(--color-text-secondary); font-weight: normal; padding: 6px 8px; border-bottom: 1px solid var(--color-border); text-align: left; }
+  #scores-list td { padding: 8px 8px; border-bottom: 1px solid var(--color-border); }
+  #scores-list tr:last-child td { border-bottom: none; }
+  #scores-list tr[style] td { font-weight: 700; }
+  #scores-list .rank-1 td { color: #f5c842; }
+  #scores-list .rank-2 td { color: #c0c0c0; }
+  #scores-list .rank-3 td { color: #cd7f32; }
+  .no-scores { color: var(--color-text-secondary); font-size: 14px; padding: 20px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div id="title">SUDOKU</div>
+    <div id="difficulty-badge">Easy</div>
+    <div id="timer">0:00</div>
+  </div>
+  <div id="toolbar">
+    <button class="toolbar-btn" id="btn-new"><span class="btn-icon">＋</span>New</button>
+    <button class="toolbar-btn" id="btn-palette"><span class="btn-icon">🎨</span>Theme</button>
+    <button class="toolbar-btn" id="btn-hint"><span class="btn-icon">💡</span>Hint</button>
+    <button class="toolbar-btn" id="btn-scores"><span class="btn-icon">🏆</span>Scores</button>
+  </div>
+  <div id="board-wrap"><div id="board"></div></div>
+  <div id="status-row">
+    <div id="pencil-toggle"><div id="pencil-dot"></div><span>Notes</span></div>
+    <div id="mistakes">Mistakes: <span id="mistake-count">0</span> / 3</div>
+  </div>
+  <div id="numpad">
+    <button class="pad-btn" data-num="1">1</button>
+    <button class="pad-btn" data-num="2">2</button>
+    <button class="pad-btn" data-num="3">3</button>
+    <button class="pad-btn" data-num="4">4</button>
+    <button class="pad-btn" data-num="5">5</button>
+    <button class="pad-btn" data-num="6">6</button>
+    <button class="pad-btn" data-num="7">7</button>
+    <button class="pad-btn" data-num="8">8</button>
+    <button class="pad-btn" data-num="9">9</button>
+    <button class="pad-btn" id="btn-erase" style="font-size:22px;">↩</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-new">
+  <div class="modal">
+    <h2>New Game</h2><p>Choose a difficulty</p>
+    <div class="diff-grid">
+      <button class="diff-btn selected" data-diff="easy">Easy</button>
+      <button class="diff-btn" data-diff="medium">Medium</button>
+      <button class="diff-btn" data-diff="hard">Hard</button>
+      <button class="diff-btn" data-diff="expert">Expert</button>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-btn" id="modal-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-start">Start</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-over">
+  <div class="modal">
+    <h2>Game Over</h2><p>Too many mistakes. Better luck next time!</p>
+    <div class="modal-btns"><button class="modal-btn primary" id="modal-over-new">New Game</button></div>
+  </div>
+</div>
+
+
+<div class="modal-overlay" id="modal-palette">
+  <div class="modal">
+    <h2>🎨 Color Theme</h2>
+    <p>Choose a color scheme</p>
+    <div id="palette-grid"></div>
+    <div class="modal-btns"><button class="modal-btn primary" id="modal-palette-close">Close</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-scores">
+  <div class="modal">
+    <h2>🏆 Top Scores</h2>
+    <div class="scores-tabs">
+      <button class="score-tab active" data-diff="easy">Easy</button>
+      <button class="score-tab" data-diff="medium">Medium</button>
+      <button class="score-tab" data-diff="hard">Hard</button>
+      <button class="score-tab" data-diff="expert">Expert</button>
+    </div>
+    <div id="scores-content"></div>
+    <div class="modal-btns"><button class="modal-btn" id="modal-scores-new">New Game</button><button class="modal-btn primary" id="modal-scores-close">Close</button></div>
+  </div>
+</div>
+
+<script>
+const BLANKS = { easy:36, medium:46, hard:52, expert:57 };
+let puzzle, solution, notes, selected, pencilMode, mistakes, hintsUsed, timerSecs, timerInterval, history, currentDiff, gameOver;
+let completedNumbers = new Set();
+let peakBoxNotes = {}; // tracks peak note count per "boxIdx:num" — if peak>1 and current=1, it's a lone survivor
+const givenSet = new Set();
+
+function isGiven(i) { return givenSet.has(i); }
+function shuffle(a) { for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a; }
+
+function isValid(g,idx,num) {
+  const r=Math.floor(idx/9),c=idx%9;
+  for(let x=0;x<9;x++){if(g[r*9+x]===num||g[x*9+c]===num)return false;}
+  const br=Math.floor(r/3)*3,bc=Math.floor(c/3)*3;
+  for(let x=0;x<3;x++)for(let y=0;y<3;y++)if(g[(br+x)*9+(bc+y)]===num)return false;
+  return true;
+}
+// Iterative solver — avoids deep recursion that can hit Safari call stack limits
+function solveGrid(g) {
+  const stack=[];
+  let pos=g.indexOf(0);
+  if(pos===-1)return true;
+  stack.push({pos,nums:shuffle([1,2,3,4,5,6,7,8,9]),ni:0});
+  while(stack.length){
+    const frame=stack[stack.length-1];
+    let placed=false;
+    while(frame.ni<9){
+      const n=frame.nums[frame.ni++];
+      if(isValid(g,frame.pos,n)){
+        g[frame.pos]=n;
+        const next=g.indexOf(0);
+        if(next===-1)return true;
+        stack.push({pos:next,nums:shuffle([1,2,3,4,5,6,7,8,9]),ni:0});
+        placed=true; break;
+      }
+    }
+    if(!placed){g[frame.pos]=0;stack.pop();}
+  }
+  return false;
+}
+function generateSolved() { const g=Array(81).fill(0); solveGrid(g); return g; }
+// Iterative solution counter — stops at 2, used to verify unique solution
+function countSols(grid){
+  const g=[...grid];
+  let count=0;
+  const stack=[];
+  let pos=g.indexOf(0);
+  if(pos===-1)return 1;
+  stack.push({pos,ni:1});
+  while(stack.length){
+    const frame=stack[stack.length-1];
+    let placed=false;
+    while(frame.ni<=9){
+      const n=frame.ni++;
+      if(isValid(g,frame.pos,n)){
+        g[frame.pos]=n;
+        const next=g.indexOf(0);
+        if(next===-1){count++;g[frame.pos]=0;if(count>1)return count;continue;}
+        stack.push({pos:next,ni:1});
+        placed=true; break;
+      }
+    }
+    if(!placed){g[frame.pos]=0;stack.pop();}
+  }
+  return count;
+}
+function makePuzzle(sol,blanks) {
+  const p=[...sol],idxs=shuffle([...Array(81).keys()]);
+  let removed=0;
+  for(const i of idxs){
+    if(removed>=blanks)break;
+    const bk=p[i]; p[i]=0;
+    if(countSols([...p])===1)removed++; else p[i]=bk;
+  }
+  return p;
+}
+
+function startGame(diff) {
+  currentDiff=diff;
+  solution=generateSolved();
+  puzzle=makePuzzle([...solution],BLANKS[diff]);
+  notes=Array(81).fill(null).map(()=>new Set());
+  selected=null; pencilMode=false; mistakes=0; hintsUsed=0; gameOver=false; history=[]; completedNumbers=new Set(); peakBoxNotes={};
+  clearInterval(timerInterval); timerSecs=0;
+  document.getElementById('timer').textContent='0:00';
+  timerInterval=setInterval(()=>{ timerSecs++; document.getElementById('timer').textContent=formatTime(timerSecs); },1000);
+  document.getElementById('mistake-count').textContent='0';
+  document.getElementById('difficulty-badge').textContent=diff.charAt(0).toUpperCase()+diff.slice(1);
+  document.getElementById('pencil-toggle').classList.remove('active');
+  document.body.classList.remove('notes-mode');
+  givenSet.clear();
+  puzzle.forEach((v,i)=>{ if(v!==0)givenSet.add(i); });
+  renderBoard(); refreshNumpad(); updateHintBtn();
+}
+
+function formatTime(s){ return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; }
+
+function renderBoard() {
+  const board=document.getElementById('board'); board.innerHTML='';
+  for(let i=0;i<81;i++){
+    const cell=document.createElement('div'); cell.className='cell'; cell.dataset.idx=i;
+    const row=Math.floor(i/9),col=i%9;
+    if(col===2||col===5)cell.classList.add('box-right');
+    if(row===2||row===5)cell.classList.add('box-bottom');
+    if(puzzle[i]!==0){cell.classList.add('given');setCellContent(cell,puzzle[i]);}
+    else if(notes[i].size>0)renderNotes(cell,notes[i]);
+    cell.addEventListener('click',()=>selectCell(i));
+    board.appendChild(cell);
+  }
+  applyHighlights();
+}
+
+function setCellContent(cell,num) {
+  cell.innerHTML='';
+  cell.appendChild(document.createTextNode(num));
+}
+
+function getBoxNoteCount(cellIdx,num){
+  // Count how many cells in the same 3x3 box have this number as a note
+  const r=Math.floor(cellIdx/9),c=cellIdx%9;
+  const br=Math.floor(r/3)*3,bc=Math.floor(c/3)*3;
+  let count=0;
+  for(let x=0;x<3;x++)for(let y=0;y<3;y++){
+    const i=(br+x)*9+(bc+y);
+    if(puzzle[i]===0&&notes[i].has(num)&&!completedNumbers.has(num))count++;
+  }
+  return count;
+}
+function renderNotes(cell,noteSet){
+  const idx=+cell.dataset.idx;
+  const g=document.createElement('div'); g.className='notes';
+  for(let n=1;n<=9;n++){
+    const d=document.createElement('div'); d.className='note';
+    if(noteSet.has(n)&&!completedNumbers.has(n)){
+      d.textContent=n;
+      const boxIdx=Math.floor(Math.floor(idx/9)/3)*3+Math.floor((idx%9)/3);
+      const key=boxIdx+':'+n;
+      const count=getBoxNoteCount(idx,n);
+      // Lone survivor: currently 1, but peak was higher (meaning one was eliminated)
+      if(count===1&&(peakBoxNotes[key]||0)>1) d.classList.add('lone');
+    }
+    g.appendChild(d);
+  }
+  cell.appendChild(g);
+}
+
+function applyHighlights(){
+  const cells=document.querySelectorAll('.cell');
+  cells.forEach(c=>{
+    c.classList.remove('selected','highlight','same-num','error','entered');
+    const i=+c.dataset.idx; c.innerHTML='';
+    if(puzzle[i]!==0){
+      if(isGiven(i)){c.classList.add('given');setCellContent(c,puzzle[i]);}
+      else{
+        c.classList.add('entered');
+        if(puzzle[i]!==solution[i])c.classList.add('error');
+        setCellContent(c,puzzle[i]);
+      }
+    } else if(notes[i].size>0){renderNotes(c,notes[i]);}
+  });
+  if(selected===null)return;
+  const sR=Math.floor(selected/9),sC=selected%9,sB=Math.floor(sR/3)*3+Math.floor(sC/3);
+  const sV=puzzle[selected];
+  cells.forEach(c=>{
+    const i=+c.dataset.idx,r=Math.floor(i/9),col=i%9,box=Math.floor(r/3)*3+Math.floor(col/3);
+    if(i===selected)c.classList.add('selected');
+    else if(r===sR||col===sC||box===sB)c.classList.add('highlight');
+    if(sV&&puzzle[i]===sV)c.classList.add('same-num');
+  });
+}
+
+function updateCell(i){
+  const cell=document.querySelector(`[data-idx="${i}"]`);
+  cell.innerHTML=''; cell.classList.remove('given','entered','error');
+  if(puzzle[i]!==0){
+    if(isGiven(i)){cell.classList.add('given');setCellContent(cell,puzzle[i]);}
+    else{cell.classList.add('entered');if(puzzle[i]!==solution[i])cell.classList.add('error');setCellContent(cell,puzzle[i]);}
+  } else if(notes[i].size>0){renderNotes(cell,notes[i]);}
+}
+
+function selectCell(i){ selected=i; applyHighlights(); }
+
+/* COMPLETION ANIMATIONS */
+function getGroups(idx){
+  const r=Math.floor(idx/9),c=idx%9,br=Math.floor(r/3)*3,bc=Math.floor(c/3)*3;
+  const row=[],col=[],box=[];
+  for(let x=0;x<9;x++){row.push(r*9+x);col.push(x*9+c);}
+  for(let x=0;x<3;x++)for(let y=0;y<3;y++)box.push((br+x)*9+(bc+y));
+  return{row,col,box};
+}
+
+function groupComplete(indices){ return indices.every(i=>puzzle[i]!==0&&puzzle[i]===solution[i]); }
+
+function flashGroup(indices,delay=0){
+  indices.forEach((i,pos)=>{
+    setTimeout(()=>{
+      const cell=document.querySelector(`[data-idx="${i}"]`); if(!cell)return;
+      cell.classList.remove('flash-complete'); void cell.offsetWidth; cell.classList.add('flash-complete');
+      spawnSparkles(cell);
+      setTimeout(()=>cell.classList.remove('flash-complete'),700);
+    },delay+pos*28);
+  });
+}
+
+function spawnSparkles(cell){
+  const colors=['#7c6af5','#4caf7d','#f5c842','#66aaee','#ff9f66'];
+  for(let i=0;i<6;i++){
+    const s=document.createElement('div'); s.className='sparkle';
+    const sz=3+Math.random()*5,angle=(Math.PI*2*i/6)+Math.random()*0.4,dist=12+Math.random()*14;
+    s.style.cssText=`width:${sz}px;height:${sz}px;background:${colors[i%colors.length]};left:50%;top:50%;--tx:${Math.cos(angle)*dist}px;--ty:${Math.sin(angle)*dist}px;margin-left:-${sz/2}px;margin-top:-${sz/2}px;`;
+    cell.appendChild(s); setTimeout(()=>s.remove(),520);
+  }
+}
+
+function checkAndAnimate(idx){
+  const num=puzzle[idx]; if(!num||num!==solution[idx])return;
+  const{row,col,box}=getGroups(idx); let delay=0;
+  if(groupComplete(row)){flashGroup(row,delay);delay+=120;}
+  if(groupComplete(col)){flashGroup(col,delay);delay+=120;}
+  if(groupComplete(box)){flashGroup(box,delay);delay+=120;}
+  const allOfNum=[];for(let i=0;i<81;i++)if(solution[i]===num)allOfNum.push(i);
+  if(!completedNumbers.has(num)&&allOfNum.every(i=>puzzle[i]===solution[i])){
+    completedNumbers.add(num);
+    flashGroup(allOfNum,delay);
+    const btn=document.querySelector(`.pad-btn[data-num="${num}"]`);
+    if(btn){btn.classList.add('done');btn.innerHTML='<span class="check-mark">✓</span>';}
+    setTimeout(()=>{
+      for(let i=0;i<81;i++){if(puzzle[i]===num||solution[i]===num)updateCell(i);}
+      for(let i=0;i<81;i++){if(notes[i].has(num)){notes[i].delete(num);if(puzzle[i]===0)updateCell(i);}}
+    },delay+180);
+  }
+}
+
+function refreshNumpad(){
+  document.querySelectorAll('.pad-btn[data-num]').forEach(btn=>{
+    const n=+btn.dataset.num; btn.classList.remove('done'); btn.innerHTML=n;
+    if(completedNumbers.has(n)){btn.classList.add('done');btn.innerHTML='<span class="check-mark">✓</span>';}
+  });
+}
+
+/* INPUT */
+function enterNumber(num){
+  if(gameOver||selected===null||isGiven(selected))return;
+  if(pencilMode){
+    if(puzzle[selected]!==0)return;
+    if(num===0)notes[selected].clear();
+    else if(!completedNumbers.has(num)){
+      const ns=notes[selected];
+      if(ns.has(num)){
+        ns.delete(num);
+      } else {
+        ns.add(num);
+        // Update peak for this box:num at the moment of addition
+        const r=Math.floor(selected/9),c=selected%9;
+        const boxIdx=Math.floor(r/3)*3+Math.floor(c/3);
+        const key=boxIdx+':'+num;
+        const count=getBoxNoteCount(selected,num);
+        if(!peakBoxNotes[key]||count>peakBoxNotes[key]) peakBoxNotes[key]=count;
+      }
+    }
+    updateCell(selected); return;
+  }
+  const allNotesBefore=notes.map(s=>new Set(s));
+  history.push({idx:selected,prev:puzzle[selected],prevNotes:allNotesBefore[selected],allNotes:allNotesBefore});
+  puzzle[selected]=num; notes[selected].clear();
+  if(num!==0&&num!==solution[selected]){
+    mistakes++;
+    document.getElementById('mistake-count').textContent=mistakes;
+    if(mistakes>=3){clearInterval(timerInterval);gameOver=true;applyHighlights();setTimeout(()=>showModal('modal-over'),400);return;}
+  }
+  if(num!==0){
+    const r=Math.floor(selected/9),c=selected%9,br=Math.floor(r/3)*3,bc=Math.floor(c/3)*3;
+    const affectedBoxes=new Set();
+    for(let x=0;x<9;x++){
+      [r*9+x,x*9+c].forEach(i=>{
+        if(i!==selected&&notes[i].has(num)){
+          const ir=Math.floor(i/9),ic=i%9;
+          const ibr=Math.floor(ir/3)*3,ibc=Math.floor(ic/3)*3;
+          affectedBoxes.add(Math.floor(ibr/3)*3+Math.floor(ibc/3));
+          notes[i].delete(num);updateCell(i);
+        }
+      });
+    }
+    for(let x=0;x<3;x++)for(let y=0;y<3;y++){
+      const i=(br+x)*9+(bc+y);
+      if(i!==selected&&notes[i].has(num)){
+        affectedBoxes.add(Math.floor(br/3)*3+Math.floor(bc/3));
+        notes[i].delete(num);updateCell(i);
+      }
+    }
+    // Re-render surviving note cells in affected boxes — peak tracking in renderNotes handles lone detection
+    affectedBoxes.forEach(bIdx=>{
+      const bRow=Math.floor(bIdx/3)*3,bCol=(bIdx%3)*3;
+      for(let x=0;x<3;x++)for(let y=0;y<3;y++){
+        const i=(bRow+x)*9+(bCol+y);
+        if(puzzle[i]===0&&notes[i].size>0)updateCell(i);
+      }
+    });
+  }
+  updateCell(selected); applyHighlights();
+  if(num!==0&&num===solution[selected])checkAndAnimate(selected);
+  checkComplete();
+}
+
+function undo(){
+  if(!history.length)return;
+  const h=history.pop(); const{idx,prev,prevNotes}=h;
+  const wasNum=puzzle[idx];
+  if(wasNum&&completedNumbers.has(wasNum)){
+    const all=[];for(let i=0;i<81;i++)if(solution[i]===wasNum)all.push(i);
+    if(!all.every(i=>i===idx?false:puzzle[i]===solution[i])){
+      completedNumbers.delete(wasNum); refreshNumpad();
+      for(let i=0;i<81;i++)if(puzzle[i]===wasNum||solution[i]===wasNum)updateCell(i);
+    }
+  }
+  // Restore full notes snapshot if available (captures auto-eliminated notes)
+  if(h.allNotes) notes=h.allNotes.map(s=>new Set(s));
+  else notes[idx]=prevNotes;
+  puzzle[idx]=prev; updateCell(idx); applyHighlights();
+}
+
+const MAX_HINTS=3;
+function updateHintBtn(){
+  const btn=document.getElementById('btn-hint');
+  const left=MAX_HINTS-hintsUsed;
+  btn.innerHTML=`<span class="btn-icon">💡</span>Hint (${left})`;
+  btn.style.opacity=left<=0?'0.4':'1';
+  btn.style.pointerEvents=left<=0?'none':'auto';
+}
+function giveHint(){
+  if(gameOver||hintsUsed>=MAX_HINTS)return;
+  const empties=[];
+  for(let i=0;i<81;i++)if(!isGiven(i)&&puzzle[i]!==solution[i])empties.push(i);
+  if(!empties.length)return;
+  hintsUsed++;
+  updateHintBtn();
+  const i=empties[Math.floor(Math.random()*empties.length)];
+  const hintNotes=notes.map(s=>new Set(s));
+  history.push({idx:i,prev:puzzle[i],prevNotes:hintNotes[i],allNotes:hintNotes});
+  puzzle[i]=solution[i]; notes[i].clear(); selected=i;
+  updateCell(i); applyHighlights(); checkAndAnimate(i); checkComplete();
+}
+
+function checkComplete(){
+  for(let i=0;i<81;i++)if(puzzle[i]!==solution[i])return;
+  clearInterval(timerInterval); gameOver=true;
+  saveScore(currentDiff,timerSecs,mistakes,hintsUsed);
+  launchWinAnimation();
+  setTimeout(()=>{
+    // Switch active scores tab to current difficulty
+    document.querySelectorAll('.score-tab').forEach(t=>t.classList.remove('active'));
+    const tab=document.querySelector(`.score-tab[data-diff="${currentDiff}"]`);
+    if(tab)tab.classList.add('active');
+    scoresActiveDiff=currentDiff;
+    renderScores(currentDiff,lastSavedScore);
+    showModal('modal-scores');
+  },2200);
+}
+
+function launchWinAnimation(){
+  // Full board wave — sweep all 81 cells in a diagonal ripple
+  for(let i=0;i<81;i++){
+    const r=Math.floor(i/9),c=i%9;
+    const delay=(r+c)*45;
+    setTimeout(()=>{
+      const cell=document.querySelector(`[data-idx="${i}"]`);
+      if(!cell)return;
+      cell.classList.remove('flash-complete'); void cell.offsetWidth; cell.classList.add('flash-complete');
+      spawnSparkles(cell);
+      setTimeout(()=>cell.classList.remove('flash-complete'),700);
+    },delay);
+  }
+  // Confetti after the wave peaks
+  setTimeout(()=>launchConfetti(),700);
+}
+
+function launchConfetti(){
+  const canvas=document.createElement('canvas');
+  canvas.id='confetti-canvas';
+  document.body.appendChild(canvas);
+  const ctx=canvas.getContext('2d');
+  canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+
+  const colors=['#7c6af5','#4caf7d','#f5c842','#66aaee','#ff9f66','#ff6b6b','#ee88ff','#44ddcc'];
+  const pieces=[];
+  const count=120;
+
+  for(let i=0;i<count;i++){
+    const x=Math.random()*canvas.width;
+    pieces.push({
+      x, y:-10-Math.random()*canvas.height*0.4,
+      vx:(Math.random()-0.5)*4,
+      vy:2+Math.random()*4,
+      rot:Math.random()*360,
+      rotV:(Math.random()-0.5)*8,
+      w:6+Math.random()*8,
+      h:3+Math.random()*5,
+      color:colors[Math.floor(Math.random()*colors.length)],
+      alpha:1,
+      shape:Math.random()>0.5?'rect':'circle'
+    });
+  }
+
+  let frame=0;
+  const maxFrames=140;
+
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    pieces.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.rot+=p.rotV; p.vy+=0.07;
+      if(frame>80)p.alpha=Math.max(0,p.alpha-0.018);
+      ctx.save();
+      ctx.globalAlpha=p.alpha;
+      ctx.translate(p.x,p.y);
+      ctx.rotate(p.rot*Math.PI/180);
+      ctx.fillStyle=p.color;
+      if(p.shape==='circle'){
+        ctx.beginPath(); ctx.arc(0,0,p.w/2,0,Math.PI*2); ctx.fill();
+      } else {
+        ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h);
+      }
+      ctx.restore();
+    });
+    frame++;
+    if(frame<maxFrames) requestAnimationFrame(draw);
+    else canvas.remove();
+  }
+  requestAnimationFrame(draw);
+}
+
+
+/* SCORES */
+function storageOK(){try{localStorage.setItem('_t','1');localStorage.removeItem('_t');return true;}catch{return false;}}
+function getScores(diff){try{return JSON.parse(localStorage.getItem('sdk_'+diff)||'[]');}catch{return[];}}
+let lastSavedScore = null;
+function saveScore(diff,secs,errs,hints){
+  if(!storageOK())return;
+  try{
+    const s=getScores(diff);
+    const entry={time:secs,mistakes:errs,hints:hints||0,date:new Date().toLocaleDateString()};
+    lastSavedScore=entry;
+    s.push(entry);
+    s.sort((a,b)=>a.time-b.time); s.splice(10);
+    localStorage.setItem('sdk_'+diff,JSON.stringify(s));
+  }catch(e){console.warn('Score save failed:',e);}
+}
+function renderScores(diff,highlightEntry=null){
+  const scores=getScores(diff),el=document.getElementById('scores-content');
+  if(!scores.length){el.innerHTML=`<p class="no-scores">No scores yet for ${diff}.<br>Complete a puzzle to appear here!</p>`;return;}
+  let h=`<table id="scores-list"><thead><tr><th>#</th><th>Time</th><th>❌</th><th>💡</th><th>Date</th></tr></thead><tbody>`;
+  scores.forEach((s,i)=>{
+    const cls=i===0?'rank-1':i===1?'rank-2':i===2?'rank-3':'';
+    const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1;
+    const isRecent=highlightEntry&&s.time===highlightEntry.time&&s.mistakes===highlightEntry.mistakes&&s.date===highlightEntry.date;
+    const recentStyle=isRecent?' style="outline:1.5px solid var(--color-accent);outline-offset:-1px;font-weight:700;"':'';
+    h+=`<tr class="${cls}"${recentStyle}><td>${medal}</td><td>${formatTime(s.time)}</td><td>${s.mistakes}</td><td>${s.hints||0}</td><td>${s.date}</td></tr>`;
+  });
+  el.innerHTML=h+'</tbody></table>';
+}
+
+
+/* ================================================================
+   COLOR PALETTES
+   Each palette: { name, bg, surface, surfaceRaised, border, borderStrong,
+                   accent, accentGlow, accentMuted, textPrimary, textSecondary,
+                   textGiven, textEntered, notesBorder, notesBorderStrong, notesBoardBg,
+                   flashMid, flashPeak }
+================================================================ */
+const PALETTES = [
+  {
+    id:'dark-gold',
+    notesHighlight:'#0d2a22', notesSameNum:'#0f3328',
+    timerColor:'#eeeef5',
+    name:'Midnight Gold',
+    bg:'#0f0f13', surface:'#1a1a24', surfaceRaised:'#22222f',
+    border:'#2e2e3f', borderStrong:'#4a4a66',
+    accent:'#F3B544', accentGlow:'#F3B54422', accentMuted:'#4a3a10',
+    textPrimary:'#eeeef5', textSecondary:'#8888aa', textGiven:'#eeeef5', textEntered:'#F3B544',
+    notesBorder:'#1a6655', notesBorderStrong:'#22aa88', notesBoardBg:'#0f2e25',
+    flashMid:'#3d2e08', flashPeak:'#4a3a10',
+    swatches:['#0f0f13','#4a4a66','#F3B544','#22aa88']
+  },
+  {
+    id:'dark-crimson',
+    notesHighlight:'#0d1a35', notesSameNum:'#0f2245',
+    timerColor:'#eeeef5',
+    name:'Dark Crimson',
+    bg:'#0f0d0d', surface:'#1e1515', surfaceRaised:'#2a1c1c',
+    border:'#3d2525', borderStrong:'#6b3535',
+    accent:'#e05c5c', accentGlow:'#e05c5c22', accentMuted:'#4a1c1c',
+    textPrimary:'#f0e8e8', textSecondary:'#997777', textGiven:'#f0e8e8', textEntered:'#e05c5c',
+    notesBorder:'#1a3355', notesBorderStrong:'#2255aa', notesBoardBg:'#0d1a2e',
+    flashMid:'#3d1515', flashPeak:'#551f1f',
+    swatches:['#0f0d0d','#6b3535','#e05c5c','#2255aa']
+  },
+  {
+    id:'white-ocean',
+    notesHighlight:'#a3f0db', notesSameNum:'#8cc4b3',
+    timerColor:'#0d2233',
+    name:'White Ocean',
+    bg:'#f4f8fb', surface:'#ffffff', surfaceRaised:'#eaf2f8',
+    border:'#c5d8e8', borderStrong:'#4a90b8',
+    accent:'#1a6fa6', accentGlow:'#1a6fa622', accentMuted:'#c5ddef',
+    textPrimary:'#0d2233', textSecondary:'#5577aa', textGiven:'#0d2233', textEntered:'#1a6fa6',
+    notesBorder:'#88bbdd', notesBorderStrong:'#1a6fa6', notesBoardBg:'#ddeef8',
+    flashMid:'#b8d8ee', flashPeak:'#8ec4e8',
+    swatches:['#f4f8fb','#4a90b8','#1a6fa6','#1a6fa6']
+  },
+  {
+    id:'white-forest',
+    notesHighlight:'#a3f0db', notesSameNum:'#8cc4b3',
+    timerColor:'#1a2d14',
+    name:'White Forest',
+    bg:'#f5f7f2', surface:'#ffffff', surfaceRaised:'#edf2e8',
+    border:'#c8d8bb', borderStrong:'#5a8a44',
+    accent:'#3a7a28', accentGlow:'#3a7a2822', accentMuted:'#cce0c0',
+    textPrimary:'#1a2d14', textSecondary:'#5a7a4a', textGiven:'#1a2d14', textEntered:'#3a7a28',
+    notesBorder:'#b08040', notesBorderStrong:'#c8963a', notesBoardBg:'#f7eddc',
+    flashMid:'#cce0b8', flashPeak:'#aad090',
+    swatches:['#f5f7f2','#5a8a44','#3a7a28','#c8963a']
+  },
+  {
+    id:'tan-desert',
+    notesHighlight:'#c8dfd0', notesSameNum:'#38b28d',
+    timerColor:'#2a1800',
+    name:'Desert Sand',
+    bg:'#f2ead8', surface:'#fffdf5', surfaceRaised:'#ede5cc',
+    border:'#d4c49a', borderStrong:'#a07840',
+    accent:'#c0561a', accentGlow:'#c0561a22', accentMuted:'#e8d0b0',
+    textPrimary:'#2a1800', textSecondary:'#887755', textGiven:'#2a1800', textEntered:'#c0561a',
+    notesBorder:'#557744', notesBorderStrong:'#446633', notesBoardBg:'#dde8d0',
+    flashMid:'#e8d0a0', flashPeak:'#d4b870',
+    swatches:['#f2ead8','#a07840','#c0561a','#446633']
+  },
+  {
+    id:'tan-plum',
+    notesHighlight:'#e0c8e0', notesSameNum:'#cc99cc',
+    timerColor:'#1e0e1e',
+    name:'Tan & Plum',
+    bg:'#f0ebe0', surface:'#faf7f0', surfaceRaised:'#e8e0d0',
+    border:'#cfc4aa', borderStrong:'#7a5c7a',
+    accent:'#7a2a6a', accentGlow:'#7a2a6a22', accentMuted:'#ddc8dd',
+    textPrimary:'#1e0e1e', textSecondary:'#7a6070', textGiven:'#1e0e1e', textEntered:'#7a2a6a',
+    notesBorder:'#9a6a9a', notesBorderStrong:'#7a2a6a', notesBoardBg:'#eddde8',
+    flashMid:'#ddbbdd', flashPeak:'#cc99cc',
+    swatches:['#f0ebe0','#7a5c7a','#7a2a6a','#7a2a6a']
+  },
+];
+
+let activePaletteId = 'dark-gold';
+
+function applyPalette(p){
+  const r=document.documentElement.style;
+  r.setProperty('--color-bg', p.bg);
+  r.setProperty('--color-surface', p.surface);
+  r.setProperty('--color-surface-raised', p.surfaceRaised);
+  r.setProperty('--color-border', p.border);
+  r.setProperty('--color-border-strong', p.borderStrong);
+  r.setProperty('--color-accent', p.accent);
+  r.setProperty('--color-accent-glow', p.accentGlow);
+  r.setProperty('--color-accent-muted', p.accentMuted);
+  r.setProperty('--color-text-primary', p.textPrimary);
+  r.setProperty('--color-text-secondary', p.textSecondary);
+  r.setProperty('--color-text-given', p.textGiven);
+  r.setProperty('--color-text-entered', p.textEntered);
+  r.setProperty('--color-notes-border', p.notesBorder);
+  r.setProperty('--color-notes-border-strong', p.notesBorderStrong);
+  r.setProperty('--color-notes-board-bg', p.notesBoardBg);
+  r.setProperty('--color-notes-highlight', p.notesHighlight||p.notesBoardBg);
+  r.setProperty('--color-notes-same-num', p.notesSameNum||p.notesBoardBg);
+  r.setProperty('--color-timer', p.timerColor||p.textPrimary);
+  // Update flash animation colors dynamically via a style tag
+  let styleTag = document.getElementById('dynamic-flash-style');
+  if(!styleTag){ styleTag=document.createElement('style'); styleTag.id='dynamic-flash-style'; document.head.appendChild(styleTag); }
+  styleTag.textContent = `@keyframes completeFlash { 0%{background:${p.surface};} 35%{background:${p.flashMid};} 65%{background:${p.flashPeak};} 100%{background:${p.surface};} }`;
+  activePaletteId = p.id;
+  // Persist if storage available
+  if(storageOK()){ try{ localStorage.setItem('sdk_palette', p.id); }catch(e){} }
+  renderPaletteModal();
+}
+
+function loadSavedPalette(){
+  if(!storageOK())return;
+  try{
+    const saved = localStorage.getItem('sdk_palette');
+    if(saved){
+      const p = PALETTES.find(x=>x.id===saved);
+      if(p){ applyPalette(p); }
+    }
+  }catch(e){}
+}
+
+function renderPaletteModal(){
+  const grid = document.getElementById('palette-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  PALETTES.forEach(p=>{
+    const div = document.createElement('div');
+    div.className = 'palette-option' + (p.id===activePaletteId?' active':'');
+    div.innerHTML = `
+      <div class="palette-swatches">
+        ${p.swatches.map(c=>`<div class="swatch" style="background:${c}"></div>`).join('')}
+      </div>
+      <div class="palette-name">${p.name}</div>
+    `;
+    div.addEventListener('click',()=>{ applyPalette(p); });
+    grid.appendChild(div);
+  });
+}
+
+
+/* MODALS */
+function showModal(id){document.getElementById(id).classList.add('show');}
+function hideModal(id){document.getElementById(id).classList.remove('show');}
+
+/* INIT */
+let selectedDiff='easy', scoresActiveDiff='easy';
+document.addEventListener('DOMContentLoaded',()=>{
+
+  startGame('easy');
+  document.getElementById('btn-new').addEventListener('click',()=>showModal('modal-new'));
+  document.getElementById('btn-hint').addEventListener('click',giveHint);
+  document.getElementById('btn-scores').addEventListener('click',()=>{renderScores(scoresActiveDiff);showModal('modal-scores');});
+  document.getElementById('btn-palette').addEventListener('click',()=>{renderPaletteModal();showModal('modal-palette');});
+  document.getElementById('modal-palette-close').addEventListener('click',()=>hideModal('modal-palette'));
+  loadSavedPalette();
+  document.querySelectorAll('.pad-btn[data-num]').forEach(btn=>btn.addEventListener('click',()=>enterNumber(+btn.dataset.num)));
+  document.getElementById('btn-erase').addEventListener('click', undo);
+  document.getElementById('pencil-toggle').addEventListener('click',()=>{
+    pencilMode=!pencilMode;
+    document.getElementById('pencil-toggle').classList.toggle('active',pencilMode);
+    document.body.classList.toggle('notes-mode',pencilMode);
+  });
+  document.addEventListener('keydown',e=>{
+    if(e.key>='1'&&e.key<='9')enterNumber(+e.key);
+    if(e.key==='Backspace'||e.key==='Delete'||e.key==='0')enterNumber(0);
+    if(e.key==='p'||e.key==='P')document.getElementById('pencil-toggle').click();
+    if(e.key==='z'&&(e.ctrlKey||e.metaKey)){e.preventDefault();undo();}
+    if(selected!==null){
+      let n=selected;
+      if(e.key==='ArrowRight')n=selected%9<8?selected+1:selected;
+      if(e.key==='ArrowLeft')n=selected%9>0?selected-1:selected;
+      if(e.key==='ArrowDown')n=selected<72?selected+9:selected;
+      if(e.key==='ArrowUp')n=selected>8?selected-9:selected;
+      if(n!==selected){selectCell(n);e.preventDefault();}
+    }
+  });
+  document.querySelectorAll('.diff-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    document.querySelectorAll('.diff-btn').forEach(b=>b.classList.remove('selected'));
+    btn.classList.add('selected'); selectedDiff=btn.dataset.diff;
+  }));
+  document.getElementById('modal-cancel').addEventListener('click',()=>hideModal('modal-new'));
+  document.getElementById('modal-start').addEventListener('click',()=>{hideModal('modal-new');startGame(selectedDiff);});
+  document.getElementById('modal-over-new').addEventListener('click',()=>{hideModal('modal-over');showModal('modal-new');});
+  document.getElementById('modal-scores-close').addEventListener('click',()=>hideModal('modal-scores'));
+  document.getElementById('modal-scores-new').addEventListener('click',()=>{hideModal('modal-scores');showModal('modal-new');});
+  document.querySelectorAll('.score-tab').forEach(tab=>tab.addEventListener('click',()=>{
+    document.querySelectorAll('.score-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active'); scoresActiveDiff=tab.dataset.diff; renderScores(scoresActiveDiff);
+  }));
+});
+</script>
+</body>
+</html>
