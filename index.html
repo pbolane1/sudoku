@@ -4,15 +4,39 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sudoku">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f0f13">
 <title>Sudoku</title>
-<link rel="manifest" href="manifest.json">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#4CAF50">
 <script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js');
-  }
+// Register service worker for offline support
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    // Inline service worker as a blob so no separate .js file needed
+    const swCode = `
+      const CACHE = 'sudoku-v1';
+      self.addEventListener('install', e=>{
+        e.waitUntil(
+          caches.open(CACHE).then(cache=>cache.addAll([self.location.href]))
+        );
+        self.skipWaiting();
+      });
+      self.addEventListener('activate', e=>{
+        self.clients.claim();
+      });
+      self.addEventListener('fetch', e=>{
+        e.respondWith(
+          caches.match(e.request).then(cached=>cached||fetch(e.request))
+        );
+      });
+    `;
+    const blob = new Blob([swCode], {type:'application/javascript'});
+    const swUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(swUrl, {scope:'./'})
+      .catch(()=>{}); // Silently fail if blocked (e.g. file://)
+  });
+}
 </script>
 <style>
   /* ============================================================
@@ -760,6 +784,20 @@ function refreshNumpad(){
 }
 
 /* INPUT */
+function playPop(){
+  try{
+    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ac.createOscillator(),gain=ac.createGain();
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.type='sine';
+    osc.frequency.setValueAtTime(219*3,ac.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(219,ac.currentTime+0.053);
+    gain.gain.setValueAtTime(0.21,ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.053);
+    osc.start(ac.currentTime); osc.stop(ac.currentTime+0.053);
+  }catch(e){}
+}
+
 function enterNumber(num){
   if(gameOver||selected===null||isGiven(selected))return;
   if(pencilMode){
@@ -771,6 +809,7 @@ function enterNumber(num){
         ns.delete(num);
       } else {
         ns.add(num);
+        playPop();
         // Update peak for this box:num at the moment of addition
         const r=Math.floor(selected/9),c=selected%9;
         const boxIdx=Math.floor(r/3)*3+Math.floor(c/3);
